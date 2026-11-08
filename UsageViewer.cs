@@ -10,14 +10,15 @@ namespace UsageViewer
 {
     public class MainForm : Form
     {
-        TextBox txtServer, txtSearch, txtClinic;
+        TextBox txtSearch, txtClinic;
         ComboBox cboMode;
         DateTimePicker dtpFrom, dtpTo;
-        Button btnToday, btnMonth, btnRun, btnExport;
+        Button btnToday, btnMonth, btnRun, btnExport, btnConn;
         DataGridView grid;
         Label lblCount, lblStatus;
         DataTable data;
-        const string DBNAME = "PM_DRUG";
+
+        void UpdateTitle() { Text = "조제 사용량 집계  -  [" + Conn.Server + (Conn.Auth == "SQL" ? " / SQL인증" : " / Windows인증") + "]"; }
 
         public MainForm()
         {
@@ -29,23 +30,24 @@ namespace UsageViewer
             var panel = new Panel { Dock = DockStyle.Top, Height = 88, Padding = new Padding(10) };
             Controls.Add(panel);
 
-            var l1 = new Label { Text = "서버", Left = 10, Top = 14, Width = 34 };
-            txtServer = new TextBox { Left = 46, Top = 11, Width = 100, Text = ".\\PM2014" };
+            btnConn = new Button { Text = "접속설정", Top = 10, Width = 90, Height = 26, Anchor = AnchorStyles.Top | AnchorStyles.Right };
+            btnConn.Left = 1148 - 90 - 12;
+            btnConn.Click += (s, e) => { using (var f = new SettingsForm()) { if (f.ShowDialog(this) == DialogResult.OK) { UpdateTitle(); DoRun(); } } };
 
-            var l2 = new Label { Text = "집계단위", Left = 160, Top = 14, Width = 56 };
-            cboMode = new ComboBox { Left = 216, Top = 11, Width = 90, DropDownStyle = ComboBoxStyle.DropDownList };
+            var l2 = new Label { Text = "집계단위", Left = 10, Top = 14, Width = 56 };
+            cboMode = new ComboBox { Left = 66, Top = 11, Width = 90, DropDownStyle = ComboBoxStyle.DropDownList };
             cboMode.Items.AddRange(new object[] { "약품별", "시간별", "요일별", "월별" });
             cboMode.SelectedIndex = 0;
 
-            var l3 = new Label { Text = "기간", Left = 320, Top = 14, Width = 34 };
-            dtpFrom = new DateTimePicker { Left = 356, Top = 11, Width = 110, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd" };
-            var l4 = new Label { Text = "~", Left = 470, Top = 14, Width = 14 };
-            dtpTo = new DateTimePicker { Left = 486, Top = 11, Width = 110, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd" };
+            var l3 = new Label { Text = "기간", Left = 170, Top = 14, Width = 34 };
+            dtpFrom = new DateTimePicker { Left = 206, Top = 11, Width = 110, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd" };
+            var l4 = new Label { Text = "~", Left = 320, Top = 14, Width = 14 };
+            dtpTo = new DateTimePicker { Left = 336, Top = 11, Width = 110, Format = DateTimePickerFormat.Custom, CustomFormat = "yyyy-MM-dd" };
             dtpFrom.Value = DateTime.Today; dtpTo.Value = DateTime.Today;
 
-            btnToday = new Button { Text = "오늘", Left = 604, Top = 10, Width = 56, Height = 25 };
+            btnToday = new Button { Text = "오늘", Left = 454, Top = 10, Width = 56, Height = 25 };
             btnToday.Click += (s, e) => { dtpFrom.Value = DateTime.Today; dtpTo.Value = DateTime.Today; DoRun(); };
-            btnMonth = new Button { Text = "이번달", Left = 664, Top = 10, Width = 60, Height = 25 };
+            btnMonth = new Button { Text = "이번달", Left = 514, Top = 10, Width = 60, Height = 25 };
             btnMonth.Click += (s, e) => { var n = DateTime.Today; dtpFrom.Value = new DateTime(n.Year, n.Month, 1); dtpTo.Value = n; DoRun(); };
 
             var l5 = new Label { Text = "약품명", Left = 10, Top = 52, Width = 48 };
@@ -63,7 +65,7 @@ namespace UsageViewer
 
             lblCount = new Label { Left = 648, Top = 52, Width = 260, Text = "", ForeColor = Color.DarkBlue, Font = new Font("맑은 고딕", 10f, FontStyle.Bold) };
 
-            panel.Controls.AddRange(new Control[] { l1, txtServer, l2, cboMode, l3, dtpFrom, l4, dtpTo, btnToday, btnMonth, l5, txtSearch, l6, txtClinic, btnRun, btnExport, lblCount });
+            panel.Controls.AddRange(new Control[] { btnConn, l2, cboMode, l3, dtpFrom, l4, dtpTo, btnToday, btnMonth, l5, txtSearch, l6, txtClinic, btnRun, btnExport, lblCount });
 
             grid = new DataGridView
             {
@@ -97,14 +99,11 @@ namespace UsageViewer
             grid.BringToFront();
 
             AcceptButton = btnRun;
+            UpdateTitle();
             Load += (s, e) => DoRun();
         }
 
-        string ConnStr()
-        {
-            return "Server=" + txtServer.Text.Trim() + ";Database=" + DBNAME +
-                   ";Integrated Security=True;TrustServerCertificate=True;Connect Timeout=10";
-        }
+        string ConnStr() { return Conn.ConnStr(); }
 
         string BuildSql(string mode)
         {
@@ -254,9 +253,106 @@ ORDER BY 년월;";
         [STAThread]
         static void Main()
         {
+            Conn.Load();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new MainForm());
         }
+    }
+
+    static class Conn
+    {
+        public static string Server = ".\\PM2014";
+        public static string Auth = "WIN";   // WIN or SQL
+        public static string User = "";
+        public static string Pw = "";
+        public const string DB = "PM_DRUG";
+
+        static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PharmTool"); } }
+        static string Cfg { get { return Path.Combine(Dir, "conn.cfg"); } }
+
+        public static void Load()
+        {
+            try
+            {
+                if (!File.Exists(Cfg)) return;
+                foreach (var line in File.ReadAllLines(Cfg))
+                {
+                    int i = line.IndexOf('='); if (i < 0) continue;
+                    string k = line.Substring(0, i).Trim(), v = line.Substring(i + 1);
+                    if (k == "Server") Server = v;
+                    else if (k == "Auth") Auth = v;
+                    else if (k == "User") User = v;
+                    else if (k == "Pw") Pw = Unprotect(v);
+                }
+            }
+            catch { }
+        }
+        public static void Save()
+        {
+            try
+            {
+                Directory.CreateDirectory(Dir);
+                File.WriteAllText(Cfg, "Server=" + Server + "\r\nAuth=" + Auth + "\r\nUser=" + User + "\r\nPw=" + Protect(Pw) + "\r\n");
+            }
+            catch { }
+        }
+        public static string ConnStr()
+        {
+            if (Auth == "SQL")
+                return "Server=" + Server + ";Database=" + DB + ";User ID=" + User + ";Password=" + Pw + ";TrustServerCertificate=True;Connect Timeout=10";
+            return "Server=" + Server + ";Database=" + DB + ";Integrated Security=True;TrustServerCertificate=True;Connect Timeout=10";
+        }
+        static string Protect(string s)
+        {
+            try { if (string.IsNullOrEmpty(s)) return ""; var b = System.Security.Cryptography.ProtectedData.Protect(Encoding.UTF8.GetBytes(s), null, System.Security.Cryptography.DataProtectionScope.CurrentUser); return Convert.ToBase64String(b); }
+            catch { return ""; }
+        }
+        static string Unprotect(string s)
+        {
+            try { if (string.IsNullOrEmpty(s)) return ""; var b = System.Security.Cryptography.ProtectedData.Unprotect(Convert.FromBase64String(s), null, System.Security.Cryptography.DataProtectionScope.CurrentUser); return Encoding.UTF8.GetString(b); }
+            catch { return ""; }
+        }
+    }
+
+    class SettingsForm : Form
+    {
+        TextBox tServer, tUser, tPw;
+        ComboBox cAuth;
+        public SettingsForm()
+        {
+            Text = "접속 설정"; Width = 430; Height = 280;
+            FormBorderStyle = FormBorderStyle.FixedDialog; StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false; MinimizeBox = false; Font = new Font("맑은 고딕", 9.5f);
+
+            Controls.Add(new Label { Text = "서버", Left = 20, Top = 24, Width = 70 });
+            tServer = new TextBox { Left = 100, Top = 21, Width = 290, Text = Conn.Server };
+            Controls.Add(tServer);
+            Controls.Add(new Label { Text = "(예: DESKTOP-8VR1BS2\\PM2014)", Left = 100, Top = 46, Width = 290, ForeColor = Color.Gray });
+
+            Controls.Add(new Label { Text = "인증방식", Left = 20, Top = 76, Width = 70 });
+            cAuth = new ComboBox { Left = 100, Top = 73, Width = 180, DropDownStyle = ComboBoxStyle.DropDownList };
+            cAuth.Items.AddRange(new object[] { "Windows 인증", "SQL 인증(아이디/암호)" });
+            cAuth.SelectedIndex = Conn.Auth == "SQL" ? 1 : 0;
+            Controls.Add(cAuth);
+
+            var lU = new Label { Text = "아이디", Left = 20, Top = 112, Width = 70 };
+            tUser = new TextBox { Left = 100, Top = 109, Width = 180, Text = Conn.User };
+            var lP = new Label { Text = "암호", Left = 20, Top = 148, Width = 70 };
+            tPw = new TextBox { Left = 100, Top = 145, Width = 180, Text = Conn.Pw, UseSystemPasswordChar = true };
+            Controls.AddRange(new Control[] { lU, tUser, lP, tPw });
+
+            EventHandler sync = (s, e) => { bool sql = cAuth.SelectedIndex == 1; lU.Enabled = tUser.Enabled = lP.Enabled = tPw.Enabled = sql; };
+            cAuth.SelectedIndexChanged += sync; sync(null, null);
+
+            var bTest = new Button { Text = "연결 테스트", Left = 100, Top = 190, Width = 110, Height = 30 };
+            bTest.Click += (s, e) => { Apply(); try { using (var cn = new SqlConnection(Conn.ConnStr())) { cn.Open(); } MessageBox.Show("연결 성공", "확인"); } catch (Exception ex) { MessageBox.Show("연결 실패:\r\n\r\n" + ex.Message, "오류", MessageBoxButtons.OK, MessageBoxIcon.Error); } };
+            var bOk = new Button { Text = "저장", Left = 225, Top = 190, Width = 78, Height = 30 };
+            bOk.Click += (s, e) => { Apply(); Conn.Save(); DialogResult = DialogResult.OK; Close(); };
+            var bCancel = new Button { Text = "취소", Left = 311, Top = 190, Width = 78, Height = 30, DialogResult = DialogResult.Cancel };
+            Controls.AddRange(new Control[] { bTest, bOk, bCancel });
+            AcceptButton = bOk; CancelButton = bCancel;
+        }
+        void Apply() { Conn.Server = tServer.Text.Trim(); Conn.Auth = cAuth.SelectedIndex == 1 ? "SQL" : "WIN"; Conn.User = tUser.Text.Trim(); Conn.Pw = tPw.Text; }
     }
 }
