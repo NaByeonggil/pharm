@@ -1,0 +1,7 @@
+# 빌드 산출물
+*.exe
+# 임시/출력 파일
+phrec_out.txt
+ui_debug.txt
+# 스크린샷
+*.png
