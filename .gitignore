@@ -5,3 +5,6 @@ phrec_out.txt
 ui_debug.txt
 # 스크린샷
 *.png
+
+# 로컬 전용(서버 내부정보)
+서버설정_로컬.md
